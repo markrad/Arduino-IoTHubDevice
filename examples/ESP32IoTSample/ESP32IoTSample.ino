@@ -99,7 +99,7 @@ void eventConfirmationCallback(IoTHubDevice &iotHubDevice, IOTHUB_CLIENT_CONFIRM
       Serial.println("Error");
       break;
     default:
-      Serial.println("Warning: unknonwn result");
+      Serial.println("Warning: unknown result");
       break;
   }
 }

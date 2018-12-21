@@ -6,6 +6,9 @@
         "IOTHUBMESSAGE",
         "IOTMESSAGE",
         "PDLIST",
-        "dlist"
+        "SSID",
+        "Wifi",
+        "dlist",
+        "println"
     ]
 }
