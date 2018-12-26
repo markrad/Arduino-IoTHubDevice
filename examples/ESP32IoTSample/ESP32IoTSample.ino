@@ -302,12 +302,6 @@ void loop()
     if (KillWiFi)
     {
       KillWiFi = false;
-      
-      //for (int i = 0; i < 3; i++)
-      //{
-        //deviceHandle->DoWork();
-        //delay(10);
-      //}
       WiFi.disconnect();
       delay(10);
     }
