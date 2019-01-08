@@ -1,6 +1,7 @@
 #include <IoTHubDevice.h>
 #include <IoTHubMessage.h>
 #include <MapUtil.h>
+#include <parson.h>
 
 #include <WiFi.h>
 #include <WiFiClient.h>
@@ -25,7 +26,8 @@ static const int LED = 13;
 IoTHubDevice *deviceHandle = NULL;
 
 // Message rate per minute - this example is limited to a maximum of 60 due to the manner in which it is timed 
-static const int MESSAGESPERMIN = 20;
+static const int MESSAGEPERMIN = 20;
+static int currentMessagePerMinute = MESSAGEPERMIN;
 
 // Message received callback
 IOTHUBMESSAGE_DISPOSITION_RESULT messageCallback(IoTHubDevice &iotHubDevice, IoTHubMessage &iotHubMessage, void *userContext)
@@ -197,6 +199,45 @@ int unknownDeviceMethodCallback(IoTHubDevice &iotHubDevice, const char *methodNa
   return status;
 }
 
+void deviceTwinCallback(DEVICE_TWIN_UPDATE_STATE update_state, const char* payLoad, void* userContext)
+{
+  Serial.printf("Device Twin Callback: update_state=%S;payLoad=\r\n%s\r\n", ((update_state == DEVICE_TWIN_UPDATE_COMPLETE)? "Update Complete" : "Update Partial"), payLoad);
+  JSON_Value *root_value = NULL;
+  JSON_Object *root_object = NULL;
+  JSON_Value* desired_messagePerMinute;
+
+  root_value = json_parse_string(payLoad);
+  root_object = json_value_get_object(root_value);
+
+  if (update_state == DEVICE_TWIN_UPDATE_COMPLETE)
+  {
+    desired_messagePerMinute = json_object_dotget_value(root_object, "desired.messagePerMinute");
+  }
+  else
+  {
+    desired_messagePerMinute = json_object_dotget_value(root_object, "messagePerMinute");
+  }
+
+  if (desired_messagePerMinute != NULL)
+  {
+    currentMessagePerMinute = json_value_get_number(desired_messagePerMinute); 
+    Serial.printf("Modifying message rate to %d a minute (every %d seconds)\r\n", currentMessagePerMinute, (60 / currentMessagePerMinute));
+    char *json = serializeToJson(currentMessagePerMinute);
+    deviceHandle->SendReportedState(json, reportedStateCallback);
+    free(json);
+  }
+  else
+  {
+    Serial.println("No change to messagePerMinute");
+  }
+}
+
+// Callback for reported state sends
+void reportedStateCallback(IoTHubDevice &iotHubDevice, int status_code, void* userContext)
+{
+  Serial.print("Reported State result = ");
+  Serial.println(status_code);
+}
 
 void initWiFi()
 {
@@ -255,6 +296,24 @@ void initTimeFromWiFi()
   Serial.println(epochTime);
 }
 
+char* serializeToJson(int messagePerMinute)
+{
+  
+  char* result;
+
+  JSON_Value* root_value = json_value_init_object();
+  JSON_Object* root_object = json_value_get_object(root_value);
+
+  // Only reported properties:
+  json_object_set_number(root_object, "messagePerMinute", messagePerMinute);
+
+  result = json_serialize_to_string(root_value);
+
+  json_value_free(root_value);
+
+  return result;
+}
+
 void setup() 
 {
   Serial.begin(115200);
@@ -278,6 +337,7 @@ void setup()
   deviceHandle->SetConnectionStatusCallback(connectionStatusCallback, NULL);
   deviceHandle->SetDeviceMethodCallback("Test", deviceMethodCallback_Test, NULL);
   deviceHandle->SetUnknownDeviceMethodCallback(unknownDeviceMethodCallback, NULL);
+  deviceHandle->SetDeviceTwinCallback(deviceTwinCallback, NULL);
 
   // Set logging state
   deviceHandle->SetLogging(false);
@@ -289,6 +349,11 @@ void loop()
   time_t now;
   IOTHUB_CLIENT_RESULT result;
   int ledOffIn = 0;
+
+  Serial.println("Sending device status");
+  char *json = serializeToJson(currentMessagePerMinute);
+  deviceHandle->SendReportedState(json, reportedStateCallback);
+  free(json);
   
   while (true)
   {
@@ -309,7 +374,7 @@ void loop()
     now = get_time(NULL);
 
     // Send a message periodically
-    if ((60 / MESSAGESPERMIN) <= now - last)
+    if ((60 / currentMessagePerMinute) <= now - last)
     {
       // Don't keep sending messages if they are being queued to avoid running out of memory
       if (deviceHandle->WaitingEventsCount() > 5)
