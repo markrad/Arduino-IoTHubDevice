@@ -16,6 +16,8 @@ IoTHubDevice::IoTHubDevice(const string &connectionString, Protocol protocol) :
     _connectionStatusCallbackUC(NULL),
     _unknownDeviceMethodCallback(NULL),
     _unknownDeviceMethodCallbackUC(NULL),
+    _deviceTwinCallback(NULL),
+    _deviceTwinCallbackUC(NULL),
     _logging(false)
 {
     platform_init();
@@ -41,7 +43,13 @@ IoTHubDevice::IoTHubDevice(const string &connectionString, Protocol protocol) :
     if (result != IOTHUB_CLIENT_OK)
         throw runtime_error("Failed to set up device method callback");
 
+    result = IoTHubClient_LL_SetDeviceTwinCallback(GetHandle(), InternalDeviceTwinCallback, this);
+
+    if (result != IOTHUB_CLIENT_OK)
+        throw runtime_error("Failed to set up device twin callback");
+
     DList_InitializeListHead(&_outstandingEventList);
+    DList_InitializeListHead(&_outstandingReportedStateEventList);
     _parsedCS = new MapUtil(connectionstringparser_parse_from_char(connectionString.c_str()), true);
 }
 
@@ -53,6 +61,13 @@ IoTHubDevice::~IoTHubDevice()
     while (!DList_IsListEmpty(&_outstandingEventList))
     {
         PDLIST_ENTRY work = _outstandingEventList.Flink;
+        DList_RemoveEntryList(work);
+        delete work;
+    }
+
+    while(!DList_IsListEmpty(&_outstandingReportedStateEventList))
+    {
+        PDLIST_ENTRY work = _outstandingReportedStateEventList.Flink;
         DList_RemoveEntryList(work);
         delete work;
     }
@@ -87,6 +102,15 @@ const char *IoTHubDevice::GetDeviceId()
 const char *IoTHubDevice::GetVersion()
 {
   return IoTHubClient_GetVersionString();
+}
+
+IOTHUB_CLIENT_STATUS IoTHubDevice::GetSendStatus()
+{
+    IOTHUB_CLIENT_STATUS result = IOTHUB_CLIENT_SEND_STATUS_IDLE;
+
+    IoTHubClient_LL_GetSendStatus(GetHandle(), &result);
+
+    return result;
 }
 
 IoTHubDevice::ConnectionStatusCallback IoTHubDevice::SetConnectionStatusCallback(ConnectionStatusCallback connectionStatusCallback, void *userContext)
@@ -131,6 +155,15 @@ IoTHubDevice::UnknownDeviceMethodCallback IoTHubDevice::SetUnknownDeviceMethodCa
     UnknownDeviceMethodCallback temp = _unknownDeviceMethodCallback;
     _unknownDeviceMethodCallback = unknownDeviceMethodCallback;
     _unknownDeviceMethodCallbackUC = userContext;
+
+    return temp;
+}
+
+IoTHubDevice::DeviceTwinCallback IoTHubDevice::SetDeviceTwinCallback(DeviceTwinCallback deviceTwinCallback, void *userContext)
+{
+    DeviceTwinCallback temp = _deviceTwinCallback;
+    _deviceTwinCallback = deviceTwinCallback;
+    _deviceTwinCallbackUC = userContext;
 
     return temp;
 }
@@ -181,6 +214,19 @@ IOTHUB_CLIENT_RESULT IoTHubDevice::SendEventAsync(const IoTHubMessage *message, 
     }
 
     return result;
+}
+    
+IOTHUB_CLIENT_RESULT IoTHubDevice::SendReportedState(const char* reportedState, ReportedStateCallback reportedStateCallback, void* userContext)
+{
+    ReportedStateUserContext *reportedStateUC = new ReportedStateUserContext(this, reportedStateCallback, userContext);
+    IOTHUB_CLIENT_RESULT result;
+    
+    result = IoTHubClient_LL_SendReportedState(GetHandle(), (const unsigned char *)reportedState, strlen(reportedState), InternalReportedStateCallback, reportedStateUC);
+
+    if (result == IOTHUB_CLIENT_OK)
+    {
+        DList_InsertTailList(&_outstandingReportedStateEventList, &(reportedStateUC->dlistEntry));
+    }
 }
 
 void IoTHubDevice::DoWork()
@@ -249,6 +295,19 @@ void IoTHubDevice::InternalEventConfirmationCallback(IOTHUB_CLIENT_CONFIRMATION_
     delete messageUC;
 }
 
+void IoTHubDevice::InternalReportedStateCallback(int status_code, void* userContext)
+{
+    ReportedStateUserContext *reportedStateUC = (ReportedStateUserContext *)userContext;
+
+    if (reportedStateUC->reportedStateCallback != NULL)
+    {
+        reportedStateUC->reportedStateCallback(*(reportedStateUC->iotHubDevice), status_code, reportedStateUC->userContext);
+    }
+
+    DList_RemoveEntryList(&(reportedStateUC->dlistEntry));
+    delete reportedStateUC;
+}
+
 int IoTHubDevice::InternalDeviceMethodCallback(const char *methodName, const unsigned char *payload, size_t size, unsigned char **response, size_t *responseSize, void *userContext)
 {
     IoTHubDevice *that = (IoTHubDevice *)userContext;
@@ -283,6 +342,21 @@ int IoTHubDevice::InternalDeviceMethodCallback(const char *methodName, const uns
     }
 
     return status;    
+}
+
+void IoTHubDevice::InternalDeviceTwinCallback(DEVICE_TWIN_UPDATE_STATE update_state, const unsigned char* payLoad, size_t size, void* userContext)
+{
+    IoTHubDevice *that = (IoTHubDevice *)userContext;
+
+    if (that->_deviceTwinCallback != NULL)
+    {
+        char *json = new char[size + 1];
+
+        memcpy(json, payLoad, size);
+        json[size] = '\0';
+        that->_deviceTwinCallback(update_state, json, that->_deviceTwinCallbackUC);
+        delete [] json;
+    }
 }
 
 IOTHUB_CLIENT_TRANSPORT_PROVIDER IoTHubDevice::GetProtocol(IoTHubDevice::Protocol protocol)
