@@ -21,6 +21,7 @@ SetMessageCallback	KEYWORD2
 SetConnectionStatusCallback	KEYWORD2
 SetDeviceMethodCallback	KEYWORD2
 SetUnknownDeviceMethodCallback	KEYWORD2
+SetDeviceTwinCallback KEYWORD2
 GetHandle	KEYWORD2
 WaitingEvents	KEYWORD2
 WaitingEventsCount	KEYWORD2
