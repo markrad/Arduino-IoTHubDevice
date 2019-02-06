@@ -60,6 +60,7 @@ private:
     
     IOTHUB_CLIENT_LL_HANDLE _deviceHandle;
     bool _logging;
+	const char *_certificate;
 
     MessageCallback _messageCallback;
     ConnectionStatusCallback _connectionStatusCallback;
@@ -82,8 +83,15 @@ public:
         MQTT,
     };
 
-    IoTHubDevice(const std::string &connectionString, IoTHubDevice::Protocol protocol = IoTHubDevice::Protocol::MQTT);
+    IoTHubDevice(const char *connectionString, IoTHubDevice::Protocol protocol = IoTHubDevice::Protocol::MQTT);
+    IoTHubDevice(const char *connectionString, 
+                 const char *x509Certificate,
+                 const char *x509PrivateKey,
+                 IoTHubDevice::Protocol protocol = IoTHubDevice::Protocol::MQTT);
     ~IoTHubDevice();
+
+    int Start();
+    void Stop();
 
     const char *GetHostName();
     const char *GetDeviceId();
@@ -94,11 +102,13 @@ public:
     UnknownDeviceMethodCallback SetUnknownDeviceMethodCallback(UnknownDeviceMethodCallback unknownDeviceMethodCallback, void *userContext = NULL);
     DeviceTwinCallback SetDeviceTwinCallback(DeviceTwinCallback deviceTwinCallback, void *userContext = NULL);
 
-    IOTHUB_CLIENT_LL_HANDLE GetHandle() const { return _deviceHandle; }
+    IOTHUB_CLIENT_LL_HANDLE GetHandle() const;
     bool WaitingEvents() { return !DList_IsListEmpty(&_outstandingEventList); }
     int WaitingEventsCount();
     bool GetLogging() { return _logging; }
     void SetLogging(bool value);
+	const char *GetTrustedCertificate() { return _certificate; }
+	void SetTrustedCertificate(const char *value);
     IOTHUB_CLIENT_STATUS GetSendStatus();
     IOTHUB_CLIENT_RESULT SendEventAsync(const std::string &message, EventConfirmationCallback eventConfirmationCallback, void *userContext = NULL);
     IOTHUB_CLIENT_RESULT SendEventAsync(const char *message, EventConfirmationCallback eventConfirmationCallback, void *userContext = NULL);
@@ -108,6 +118,11 @@ public:
 
     void DoWork();
 private:
+    const char *_connectionString;
+    const char *_x509Certificate;
+    const char *_x509PrivateKey;
+    IoTHubDevice::Protocol _protocol;
+
     // Cloud to device messages
     static IOTHUBMESSAGE_DISPOSITION_RESULT InternalMessageCallback(IOTHUB_MESSAGE_HANDLE message, void *userContext);
 

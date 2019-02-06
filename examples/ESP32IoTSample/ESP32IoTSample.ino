@@ -15,6 +15,7 @@ WiFiClient client;
 
 // Used to test reconnection logic
 bool KillWiFi = false;
+bool CheckWiFi = false;
 
 // Connection string
 static const char *CONNECTIONSTRING = "<Your Device Connection String>";
@@ -81,7 +82,7 @@ IOTHUBMESSAGE_DISPOSITION_RESULT messageCallback(IoTHubDevice &iotHubDevice, IoT
   return result;
 }
 
-// Message acknowledgement callback
+// Message acknowledgment callback
 void eventConfirmationCallback(IoTHubDevice &iotHubDevice, IOTHUB_CLIENT_CONFIRMATION_RESULT result, void *userContext)
 {
   Serial.print("Message response - ");
@@ -117,7 +118,7 @@ void connectionStatusCallback(IoTHubDevice &iotHubDevice, IOTHUB_CLIENT_CONNECTI
       Serial.print("Authenticated ");
       break;
     case IOTHUB_CLIENT_CONNECTION_UNAUTHENTICATED:
-      Serial.print("unauthenticated ");
+      Serial.print("Unauthenticated ");
       break;
     default:
       Serial.print("Status unknown ");
@@ -140,8 +141,7 @@ void connectionStatusCallback(IoTHubDevice &iotHubDevice, IOTHUB_CLIENT_CONNECTI
       break;
     case IOTHUB_CLIENT_CONNECTION_NO_NETWORK:
       Serial.println("Network unavailable - Attempting to reconnect WiFi");
-      WiFi.disconnect();
-      initWiFi();
+      CheckWiFi = true;
       break;
     case IOTHUB_CLIENT_CONNECTION_COMMUNICATION_ERROR:
       Serial.println("Communication error");
@@ -241,7 +241,7 @@ void reportedStateCallback(IoTHubDevice &iotHubDevice, int status_code, void* us
 
 void initWiFi()
 {
-    // Attempt to connect to Wifi network:
+    // Attempt to connect to WiFi network:
     Serial.printf("Attempting to connect to SSID: %s.", SSID);
 
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
@@ -254,7 +254,7 @@ void initWiFi()
     }
 
     Serial.println();
-    Serial.printf("Connected to wifi %s.\r\n", SSID);
+    Serial.printf("Connected to WiFi %s.\r\n", SSID);
 
     byte mac[6];
     
@@ -369,6 +369,24 @@ void loop()
       KillWiFi = false;
       WiFi.disconnect();
       delay(10);
+    }
+    
+    // Check WiFi if connection failure was reported
+    if (CheckWiFi)
+    {
+        Serial.println("Checking WiFi state");
+        CheckWiFi = false;
+    
+        if (WiFi.status() != WL_CONNECTED)
+        {
+            Serial.println("WiFi appears to be disconnected - attempting reconnect");
+            WiFi.disconnect();
+            initWiFi();
+        }
+        else
+        {
+            Serial.println("WiFi appears to be connected");
+        }
     }
 
     now = get_time(NULL);

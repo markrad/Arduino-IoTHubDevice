@@ -1,15 +1,14 @@
-#include <stdexcept>
-
 #include "IoTHubDevice.h"
 
 #include <AzureIoTProtocol_MQTT.h>
 #include <AzureIoTUtility.h>
 #include <azure_c_shared_utility/connection_string_parser.h>
+#include <azure_c_shared_utility/shared_util_options.h>
 #include "iothub_client_version.h"
 
 using namespace std;
 
-IoTHubDevice::IoTHubDevice(const string &connectionString, Protocol protocol) :
+IoTHubDevice::IoTHubDevice(const char *connectionString, Protocol protocol) :
     _messageCallback(NULL),
     _messageCallbackUC(NULL),
     _connectionStatusCallback(NULL),
@@ -18,42 +17,108 @@ IoTHubDevice::IoTHubDevice(const string &connectionString, Protocol protocol) :
     _unknownDeviceMethodCallbackUC(NULL),
     _deviceTwinCallback(NULL),
     _deviceTwinCallbackUC(NULL),
-    _logging(false)
+    _logging(false),
+    _x509Certificate(NULL),
+    _x509PrivateKey(NULL)
 {
-    platform_init();
-    _deviceHandle = IoTHubClient_LL_CreateFromConnectionString(connectionString.c_str(), GetProtocol(protocol));
+    _connectionString = connectionString;
+    _protocol = protocol;
+}
 
-    if (_deviceHandle == NULL)
-        throw runtime_error("Failed to create IoT hub handle");
-
-    IOTHUB_CLIENT_RESULT result;
-    
-    result = IoTHubClient_LL_SetConnectionStatusCallback(GetHandle(), InternalConnectionStatusCallback, this);
-
-    if (result != IOTHUB_CLIENT_OK)
-        throw runtime_error("Failed to set up connection status callback");
-
-    result = IoTHubClient_LL_SetMessageCallback(GetHandle(), InternalMessageCallback, this);
-
-    if (result != IOTHUB_CLIENT_OK)
-        throw runtime_error("Failed to set up message callback");
-
-    result =  IoTHubClient_LL_SetDeviceMethodCallback(GetHandle(), InternalDeviceMethodCallback, this);
-
-    if (result != IOTHUB_CLIENT_OK)
-        throw runtime_error("Failed to set up device method callback");
-
-    result = IoTHubClient_LL_SetDeviceTwinCallback(GetHandle(), InternalDeviceTwinCallback, this);
-
-    if (result != IOTHUB_CLIENT_OK)
-        throw runtime_error("Failed to set up device twin callback");
-
-    DList_InitializeListHead(&_outstandingEventList);
-    DList_InitializeListHead(&_outstandingReportedStateEventList);
-    _parsedCS = new MapUtil(connectionstringparser_parse_from_char(connectionString.c_str()), true);
+IoTHubDevice::IoTHubDevice(const char *connectionString, const char *x509Certificate, const char *x509PrivateKey, Protocol protocol) :
+    _messageCallback(NULL),
+    _messageCallbackUC(NULL),
+    _connectionStatusCallback(NULL),
+    _connectionStatusCallbackUC(NULL),
+    _unknownDeviceMethodCallback(NULL),
+    _unknownDeviceMethodCallbackUC(NULL),
+    _deviceTwinCallback(NULL),
+    _deviceTwinCallbackUC(NULL),
+    _logging(false),
+    _x509Certificate(x509Certificate),
+    _x509PrivateKey(x509PrivateKey)
+{
+    _connectionString = connectionString;
+    _protocol = protocol;
 }
 
 IoTHubDevice::~IoTHubDevice()
+{
+    if (GetHandle() != NULL)
+    {
+        Stop();
+    }
+}
+
+int IoTHubDevice::Start()
+{
+    int result = 0;
+    _parsedCS = new MapUtil(connectionstringparser_parse_from_char(_connectionString), true);
+
+    if (_parsedCS->ContainsKey("X509") && (_x509Certificate == NULL || _x509PrivateKey == NULL))
+    {
+        LogError("X509 requires certificate and private key");
+        result = __FAILURE__;
+    }
+    else
+    {
+        if ((_x509Certificate == NULL && _x509PrivateKey != NULL) ||
+            (_x509Certificate != NULL && _x509PrivateKey == NULL))
+        {
+            LogError("X509 values must both be provided or neither be provided");
+            result = __FAILURE__;
+        }
+        else
+        {
+            platform_init();
+
+            _deviceHandle = IoTHubClient_LL_CreateFromConnectionString(_connectionString, GetProtocol(_protocol));
+
+            if (_deviceHandle == NULL)
+            {
+                LogError("Failed to create IoT hub handle");
+                result = __FAILURE__;
+            }
+            else
+            {
+                if (_x509Certificate != NULL)
+                {
+                    if (
+                        (IoTHubClient_LL_SetOption(GetHandle(), OPTION_X509_CERT, _x509Certificate) != IOTHUB_CLIENT_OK) ||
+                        (IoTHubClient_LL_SetOption(GetHandle(), OPTION_X509_PRIVATE_KEY, _x509PrivateKey) != IOTHUB_CLIENT_OK)
+                       )
+                    {
+                        LogError("Failed to set X509 parameters");
+                        result = __FAILURE__;
+                    }
+                }
+
+                if (result == 0)
+                {
+                    if (                    
+                        (IoTHubClient_LL_SetConnectionStatusCallback(GetHandle(), InternalConnectionStatusCallback, this) != IOTHUB_CLIENT_OK) ||
+                        (IoTHubClient_LL_SetMessageCallback(GetHandle(), InternalMessageCallback, this) != IOTHUB_CLIENT_OK) ||
+                        (IoTHubClient_LL_SetDeviceMethodCallback(GetHandle(), InternalDeviceMethodCallback, this) != IOTHUB_CLIENT_OK) ||
+                        (IoTHubClient_LL_SetDeviceTwinCallback(GetHandle(), InternalDeviceTwinCallback, this) != IOTHUB_CLIENT_OK)
+                       )
+                    { 
+                        LogError("Failed to set up callbacks");
+                        result = __FAILURE__;
+                    }
+                    else
+                    {
+                        DList_InitializeListHead(&_outstandingEventList);
+                        DList_InitializeListHead(&_outstandingReportedStateEventList);
+                    }
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+void IoTHubDevice::Stop()
 {
     IoTHubClient_LL_Destroy(GetHandle());
     platform_deinit();
@@ -87,6 +152,16 @@ IoTHubDevice::MessageCallback IoTHubDevice::SetMessageCallback(MessageCallback m
     _messageCallbackUC = userContext;
 
     return temp;
+}
+
+IOTHUB_CLIENT_LL_HANDLE IoTHubDevice::GetHandle() const
+{
+    if (_deviceHandle == NULL)
+    {
+        LogError("Function called with null device handle");
+    }
+    
+    return _deviceHandle;
 }
 
 const char *IoTHubDevice::GetHostName()
@@ -251,8 +326,18 @@ int IoTHubDevice::WaitingEventsCount()
 
 void IoTHubDevice::SetLogging(bool value)
 {
-  _logging = value;
-  IoTHubClient_LL_SetOption(GetHandle(), OPTION_LOG_TRACE, &_logging);
+    _logging = value;
+    IoTHubClient_LL_SetOption(GetHandle(), OPTION_LOG_TRACE, &_logging);
+}
+
+void IoTHubDevice::SetTrustedCertificate(const char *value)
+{
+    _certificate = value;
+    
+    if (_certificate != NULL)
+    {
+        IoTHubClient_LL_SetOption(GetHandle(), OPTION_TRUSTED_CERT, _certificate);
+    }
 }
 
 IOTHUBMESSAGE_DISPOSITION_RESULT IoTHubDevice::InternalMessageCallback(IOTHUB_MESSAGE_HANDLE message, void *userContext)
@@ -363,7 +448,7 @@ IOTHUB_CLIENT_TRANSPORT_PROVIDER IoTHubDevice::GetProtocol(IoTHubDevice::Protoco
 {
     IOTHUB_CLIENT_TRANSPORT_PROVIDER result = NULL;
 
-	// Currently only MQTT is supported on Arduino - no WebSockets and no proxy
+    // Currently only MQTT is supported on Arduino - no WebSockets and no proxy
     switch (protocol)
     {
     case Protocol::MQTT:
