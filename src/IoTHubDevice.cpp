@@ -19,7 +19,9 @@ IoTHubDevice::IoTHubDevice(const char *connectionString, Protocol protocol) :
     _deviceTwinCallbackUC(NULL),
     _logging(false),
     _x509Certificate(NULL),
-    _x509PrivateKey(NULL)
+    _x509PrivateKey(NULL),
+    _deviceHandle(NULL),
+    _startResult(-1)
 {
     _connectionString = connectionString;
     _protocol = protocol;
@@ -36,7 +38,9 @@ IoTHubDevice::IoTHubDevice(const char *connectionString, const char *x509Certifi
     _deviceTwinCallbackUC(NULL),
     _logging(false),
     _x509Certificate(x509Certificate),
-    _x509PrivateKey(x509PrivateKey)
+    _x509PrivateKey(x509PrivateKey),
+    _deviceHandle(NULL),
+    _startResult(-1)
 {
     _connectionString = connectionString;
     _protocol = protocol;
@@ -44,7 +48,7 @@ IoTHubDevice::IoTHubDevice(const char *connectionString, const char *x509Certifi
 
 IoTHubDevice::~IoTHubDevice()
 {
-    if (GetHandle() != NULL)
+    if (_deviceHandle != NULL)
     {
         Stop();
     }
@@ -52,10 +56,18 @@ IoTHubDevice::~IoTHubDevice()
 
 int IoTHubDevice::Start()
 {
-    int result = 0;
+    int result = _startResult = 0;
+    DList_InitializeListHead(&_outstandingEventList);
+    DList_InitializeListHead(&_outstandingReportedStateEventList);
+
     _parsedCS = new MapUtil(connectionstringparser_parse_from_char(_connectionString), true);
 
-    if (_parsedCS->ContainsKey("X509") && (_x509Certificate == NULL || _x509PrivateKey == NULL))
+    if (_parsedCS == NULL)
+    {
+        LogError("Failed to parse connection string");
+        result = __FAILURE__;
+    }
+    else if (_parsedCS->ContainsKey("X509") && (_x509Certificate == NULL || _x509PrivateKey == NULL))
     {
         LogError("X509 requires certificate and private key");
         result = __FAILURE__;
@@ -105,22 +117,25 @@ int IoTHubDevice::Start()
                         LogError("Failed to set up callbacks");
                         result = __FAILURE__;
                     }
-                    else
-                    {
-                        DList_InitializeListHead(&_outstandingEventList);
-                        DList_InitializeListHead(&_outstandingReportedStateEventList);
-                    }
                 }
             }
         }
     }
+
+    _startResult = result;
 
     return result;
 }
 
 void IoTHubDevice::Stop()
 {
-    IoTHubClient_LL_Destroy(GetHandle());
+    if (_deviceHandle != NULL)
+    {
+        IoTHubClient_LL_Destroy(_deviceHandle);
+        _deviceHandle = NULL;
+        _startResult = -1;
+    }
+
     platform_deinit();
 
     while (!DList_IsListEmpty(&_outstandingEventList))
@@ -159,6 +174,10 @@ IOTHUB_CLIENT_LL_HANDLE IoTHubDevice::GetHandle() const
     if (_deviceHandle == NULL)
     {
         LogError("Function called with null device handle");
+    }
+    else if (_startResult != 0)
+    {
+        LogError("Function called after Start function failed with %d", _startResult);
     }
     
     return _deviceHandle;

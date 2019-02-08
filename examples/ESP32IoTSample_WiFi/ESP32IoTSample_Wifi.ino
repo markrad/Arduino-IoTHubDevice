@@ -1,34 +1,56 @@
+#include <AzureIoTSocket_WiFi.h>
+
+// To use X.509 authentication instead of a connection string uncomment the following define for X509TEST.
+// In order for this to work you will need to have written the X.509 key and certificate to SPIFFS and provided
+// the file names below in X509CERT_FILENAME and X509KEY_FILENAME. To test with the ESP32 I used the utility 
+// at https://github.com/me-no-dev/arduino-esp32fs-plugin to upload the appropriate files.
+//#define X509TEST
+
+#include <SPIFFS.h>
+
 #include <IoTHubDevice.h>
 #include <IoTHubMessage.h>
 #include <MapUtil.h>
 #include <parson.h>
 
-#include <WiFi.h>
-#include <WiFiClient.h>
-#include <WiFiServer.h>
-#include <WiFiUdp.h>
+#define SSID "<Your Wi-Fi SSID>"
+#define PASSWORD "<Your Wi-Fi password here or NULL for none>"
 
-// Wi-Fi information
-static const char *SSID = "<Your SSID>";
-static const char *PASSWORD = "<Your Password of set to NULL for none>";
+// This file is provided in the data subdirectory and can be uploaded with the Arduino ESP32 filesystem uploader. See link above.
+#define TRUSTED_CERTS_FILENAME "/trusted.cert.pem"
+
+// Connection string
+#ifdef X509TEST
+
+// Names of the files held in SPIFFS
+#define X509CERT_FILENAME "<Your device X.509 certificate file name here in pem format>"
+#define X509KEY_FILENAME "<Your device X.509 key file name here in pem format>"
+
+static const char *CONNECTIONSTRING = "<X.509 version of the connection string. Should contain x509=true>";
+#else
+// Regular connection string authentication used
+
+static const char *CONNECTIONSTRING = "<Regular connection string>";
+#endif
+
+// Azure IoT Hub information
 WiFiClient client;
 
 // Used to test reconnection logic
 bool KillWiFi = false;
+
+// Used to monitor network status
 bool CheckWiFi = false;
 
-// Connection string
-static const char *CONNECTIONSTRING = "<Your Device Connection String>";
-
-// LED that is flashed each time a message is sent
+// LED that is flashed each time a message is sent - you may need to change this
 static const int LED = 13;
 
 // IoT Hub
 IoTHubDevice *deviceHandle = NULL;
 
 // Message rate per minute - this example is limited to a maximum of 60 due to the manner in which it is timed 
-static const int MESSAGEPERMIN = 20;
-static int currentMessagePerMinute = MESSAGEPERMIN;
+static const int MESSAGESPERMIN = 20;
+static int currentMessagesPerMinute = MESSAGESPERMIN;
 
 // Message received callback
 IOTHUBMESSAGE_DISPOSITION_RESULT messageCallback(IoTHubDevice &iotHubDevice, IoTHubMessage &iotHubMessage, void *userContext)
@@ -46,7 +68,7 @@ IOTHUBMESSAGE_DISPOSITION_RESULT messageCallback(IoTHubDevice &iotHubDevice, IoT
       if (IOTHUB_MESSAGE_OK == (iotHubMessage.GetByteArray(&buffer, &size)))
       {
         Serial.print("Byte array message received length: ");
-        Serial.println(size);
+        Serial.println((int)size);
         
         for (int i = 0; i < size; i++)
         {
@@ -82,7 +104,7 @@ IOTHUBMESSAGE_DISPOSITION_RESULT messageCallback(IoTHubDevice &iotHubDevice, IoT
   return result;
 }
 
-// Message acknowledgment callback
+// Message acknowledgement callback
 void eventConfirmationCallback(IoTHubDevice &iotHubDevice, IOTHUB_CLIENT_CONFIRMATION_RESULT result, void *userContext)
 {
   Serial.print("Message response - ");
@@ -118,7 +140,7 @@ void connectionStatusCallback(IoTHubDevice &iotHubDevice, IOTHUB_CLIENT_CONNECTI
       Serial.print("Authenticated ");
       break;
     case IOTHUB_CLIENT_CONNECTION_UNAUTHENTICATED:
-      Serial.print("Unauthenticated ");
+      Serial.print("unauthenticated ");
       break;
     default:
       Serial.print("Status unknown ");
@@ -199,6 +221,7 @@ int unknownDeviceMethodCallback(IoTHubDevice &iotHubDevice, const char *methodNa
   return status;
 }
 
+// Optional device twin callback
 void deviceTwinCallback(DEVICE_TWIN_UPDATE_STATE update_state, const char* payLoad, void* userContext)
 {
   Serial.printf("Device Twin Callback: update_state=%S;payLoad=\r\n%s\r\n", ((update_state == DEVICE_TWIN_UPDATE_COMPLETE)? "Update Complete" : "Update Partial"), payLoad);
@@ -220,9 +243,9 @@ void deviceTwinCallback(DEVICE_TWIN_UPDATE_STATE update_state, const char* payLo
 
   if (desired_messagePerMinute != NULL)
   {
-    currentMessagePerMinute = json_value_get_number(desired_messagePerMinute); 
-    Serial.printf("Modifying message rate to %d a minute (every %d seconds)\r\n", currentMessagePerMinute, (60 / currentMessagePerMinute));
-    char *json = serializeToJson(currentMessagePerMinute);
+    currentMessagesPerMinute = json_value_get_number(desired_messagePerMinute); 
+    Serial.printf("Modifying message rate to %d a minute (every %d seconds)\r\n", currentMessagesPerMinute, (60 / currentMessagesPerMinute));
+    char *json = serializeToJson(currentMessagesPerMinute);
     deviceHandle->SendReportedState(json, reportedStateCallback);
     free(json);
   }
@@ -239,9 +262,10 @@ void reportedStateCallback(IoTHubDevice &iotHubDevice, int status_code, void* us
   Serial.println(status_code);
 }
 
+// Initialize the Wi-Fi - sample uses DHCP to acquire IP address, DNS server and Gateway
 void initWiFi()
 {
-    // Attempt to connect to WiFi network:
+    // Attempt to connect to Wifi network:
     Serial.printf("Attempting to connect to SSID: %s.", SSID);
 
     // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
@@ -254,7 +278,7 @@ void initWiFi()
     }
 
     Serial.println();
-    Serial.printf("Connected to WiFi %s.\r\n", SSID);
+    Serial.printf("Connected to wifi %s.\r\n", SSID);
 
     byte mac[6];
     
@@ -273,58 +297,113 @@ void initWiFi()
     Serial.println(mac[0],HEX);
 }
 
-void initTimeFromWiFi() 
-{  
-  const int MIN_EPOCH = 40 * 365 * 24 * 3600;
-  time_t epochTime;
+// Uses parson library that is included in the SDK for JSON manipulation
+char* serializeToJson(int messagesPerMinute)
+{
+    char* result;
 
-  configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+    JSON_Value* root_value = json_value_init_object();
+    JSON_Object* root_object = json_value_get_object(root_value);
 
-  Serial.print("Fetching time from NTP");
-  
-  epochTime = time(NULL);
-  
-  while (epochTime < MIN_EPOCH)
-  {
-    Serial.print(".");
-    delay(2000);
-    epochTime = time(NULL);
-  }
+    // Only reported properties:
+    json_object_set_number(root_object, "messagePerMinute", messagesPerMinute);
 
-  Serial.println();
-  Serial.print("Fetched NTP epoch time is: ");
-  Serial.println(epochTime);
+    result = json_serialize_to_string(root_value);
+
+    json_value_free(root_value);
+
+    return result;
 }
 
-char* serializeToJson(int messagePerMinute)
+// Read a file from SPIFFS
+uint8_t *readFile(const char *filename)
 {
+  File filehandle = SPIFFS.open(filename, "r");
   
-  char* result;
+  if (!filehandle)
+  {
+    Serial.printf("Failed to open %s\r\n", filename);
+    errorSpin();
+  }
 
-  JSON_Value* root_value = json_value_init_object();
-  JSON_Object* root_object = json_value_get_object(root_value);
+  size_t filesize = filehandle.size() + 1;
 
-  // Only reported properties:
-  json_object_set_number(root_object, "messagePerMinute", messagePerMinute);
+  if (filesize < 2)
+  {
+    Serial.printf("Failed to get size for %s\r\n", filename);
+    errorSpin();
+  }
 
-  result = json_serialize_to_string(root_value);
+  uint8_t *filecontent = new uint8_t[filesize];
 
-  json_value_free(root_value);
+  if (filecontent == NULL)
+  {
+    Serial.printf("Failed to allocate memory for %s\r\n", filename);
+    errorSpin();
+  }
 
-  return result;
+  size_t readbytes = filehandle.read(filecontent, filesize);
+
+  *(filecontent + filesize - 1) = '\0';
+  filehandle.close();
+  Serial.printf("Read %d bytes from file %s\r\n", readbytes, filename);
+
+  return filecontent;
+}
+
+// Called when a terminal error occurs
+void errorSpin()
+{
+  long i = 0;
+
+  while (true)
+  {
+    if (i++ % 20 == 0)
+    {
+       Serial.println("Error spin - unable to continue");
+    }
+    
+    delay(1000);
+  }
 }
 
 void setup() 
 {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
+  Serial.println("Starting");
   pinMode(LED, OUTPUT);
   digitalWrite(LED, LOW);
   initWiFi();
-  initTimeFromWiFi();
+  initTime();
 
   // Create IoT device
+  if(!SPIFFS.begin(true))
+  {
+    Serial.println("An Error has occurred while mounting SPIFFS");
+    errorSpin();
+  }
+
+// Read trusted certificate - this is required to allow MbedTLS to validate the server certificate
+  uint8_t *trustedCert = readFile(TRUSTED_CERTS_FILENAME);
+  
+#ifdef X509TEST
+// Read X.509 certificate and key from SPIFFS
+  uint8_t *X509cert = readFile(X509CERT_FILENAME);
+  uint8_t *X509key = readFile(X509KEY_FILENAME);
+
+  deviceHandle = new IoTHubDevice(CONNECTIONSTRING, (char *)X509cert, (char *)X509key, IoTHubDevice::Protocol::MQTT);
+#else
+// No X.509 authentication - use regular connection string
   deviceHandle = new IoTHubDevice(CONNECTIONSTRING, IoTHubDevice::Protocol::MQTT);
+#endif
+
+  if (0 != deviceHandle->Start())
+  {
+    Serial.println("Failed to start IoT device");
+    errorSpin();
+  }
+
   Serial.print("IoT SDK version = ");
   Serial.println(deviceHandle->GetVersion());
   Serial.print("Host Name = ");
@@ -340,7 +419,11 @@ void setup()
   deviceHandle->SetDeviceTwinCallback(deviceTwinCallback, NULL);
 
   // Set logging state
-  deviceHandle->SetLogging(false);
+  bool logging = false;
+  deviceHandle->SetLogging(logging);
+
+  // Pass trusted certificates
+  deviceHandle->SetTrustedCertificate((const char *)trustedCert);
 }
 
 void loop() 
@@ -351,7 +434,7 @@ void loop()
   int ledOffIn = 0;
 
   Serial.println("Sending device status");
-  char *json = serializeToJson(currentMessagePerMinute);
+  char *json = serializeToJson(currentMessagesPerMinute);
   deviceHandle->SendReportedState(json, reportedStateCallback);
   free(json);
   
@@ -367,32 +450,23 @@ void loop()
     if (KillWiFi)
     {
       KillWiFi = false;
+      
       WiFi.disconnect();
       delay(10);
     }
-    
-    // Check WiFi if connection failure was reported
+
+    // See if SDK has reported a network issue
     if (CheckWiFi)
     {
-        Serial.println("Checking WiFi state");
-        CheckWiFi = false;
-    
-        if (WiFi.status() != WL_CONNECTED)
-        {
-            Serial.println("WiFi appears to be disconnected - attempting reconnect");
-            WiFi.disconnect();
-            initWiFi();
-        }
-        else
-        {
-            Serial.println("WiFi appears to be connected");
-        }
+      CheckWiFi = false;
+      WiFi.disconnect();
+      initWiFi();
     }
 
     now = get_time(NULL);
 
     // Send a message periodically
-    if ((60 / currentMessagePerMinute) <= now - last)
+    if ((60 / currentMessagesPerMinute) <= now - last)
     {
       // Don't keep sending messages if they are being queued to avoid running out of memory
       if (deviceHandle->WaitingEventsCount() > 5)
@@ -407,7 +481,7 @@ void loop()
       else
       {
         // Send the current epoch and free memory to the hub and turn on the LED
-        String msg = "{ ""Time"" : " + String(now) + ", ""FreeMem"" : " + String(ESP.getFreeHeap()) + " }";
+        String msg = "{ ""Time"" : " + String((long)now) + ", ""FreeMem"" : " + String(ESP.getFreeHeap()) + " }";
         result = deviceHandle->SendEventAsync(msg.c_str(), eventConfirmationCallback, NULL); 
   
         if (result != IOTHUB_CLIENT_OK)

@@ -61,6 +61,7 @@ private:
     IOTHUB_CLIENT_LL_HANDLE _deviceHandle;
     bool _logging;
 	const char *_certificate;
+    int _startResult;
 
     MessageCallback _messageCallback;
     ConnectionStatusCallback _connectionStatusCallback;

@@ -3,6 +3,8 @@
         {
             "name": "Win32",
             "includePath": [
+                "C:\\Users\\markrad\\AppData\\Local\\Arduino15\\packages\\esp8266\\tools\\**",
+                "C:\\Users\\markrad\\AppData\\Local\\Arduino15\\packages\\esp8266\\hardware\\esp8266\\2.4.2\\**",
                 "${workspaceFolder}/**",
                 "${env.USERPROFILE}\\Documents\\Arduino\\libraries\\AzureIoTHub\\src",
                 "${env.USERPROFILE}\\Documents\\Arduino\\libraries\\AzureIoTUtility\\src",
@@ -13,7 +15,8 @@
                 "${env.USERPROFILE}\\AppData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.0\\tools\\sdk\\include\\newlib",
                 "${env.USERPROFILE}\\appData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.0\\tools\\sdk\\include\\config",
                 "${env.USERPROFILE}\\appData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.0\\tools\\sdk\\include\\tcpip_adapter",
-                "${env.USERPROFILE}\\appData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.0\\tools\\sdk\\include\\lwip"            ],
+                "${env.USERPROFILE}\\appData\\Local\\Arduino15\\packages\\esp32\\hardware\\esp32\\1.0.0\\tools\\sdk\\include\\lwip"
+            ],
             "defines": [
                 "_DEBUG",
                 "UNICODE",
@@ -23,7 +26,8 @@
             "compilerPath": "C:/Program Files (x86)/Microsoft Visual Studio/2017/Professional/VC/Tools/MSVC/14.16.27023/bin/Hostx64/x64/cl.exe",
             "cStandard": "c11",
             "cppStandard": "c++17",
-            "intelliSenseMode": "msvc-x64"
+            "intelliSenseMode": "msvc-x64",
+            "forcedInclude": []
         }
     ],
     "version": 4

@@ -1,14 +1,17 @@
 {
     "cSpell.words": [
+        "Adafruit",
         "Flink",
         "IOTHUB",
         "IOTHUBDEVICE",
         "IOTHUBMESSAGE",
         "IOTMESSAGE",
+        "Mbed",
         "PDLIST",
         "SSID",
         "Wifi",
         "dlist",
-        "println"
+        "println",
+        "uploader"
     ]
 }
