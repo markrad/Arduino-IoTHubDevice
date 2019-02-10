@@ -260,7 +260,7 @@ void initEthernet()
     mac[i] = (byte)random(255);
   }
 
-  Ethernet.init(33);
+  Ethernet.init(ETHERNET2_PIN);
   Ethernet.begin(mac);
 
   Serial.println("Ethernet initialized");
